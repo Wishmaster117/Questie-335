@@ -86,10 +86,24 @@ local allowFormattingUpdate = false
 local trackerBaseFrame, trackerHeaderFrame, trackerQuestFrame
 local QuestLogFrame = QuestLogExFrame or ClassicQuestLog or QuestLogFrame
 
-local BOT_TRACKER_ZONE_NAME = "Bot Quests"
+local BOT_TRACKER_ZONE_KEY = "Bot Quests"
+
+local function _GetBotTrackerZoneName()
+    return l10n(BOT_TRACKER_ZONE_KEY)
+end
 
 local function _GetBotTrackerCollapseKey(botName)
-    return BOT_TRACKER_ZONE_NAME .. "::" .. tostring(botName)
+    return BOT_TRACKER_ZONE_KEY .. "::" .. tostring(botName)
+end
+
+local function _ToggleBotTrackerCollapse(botName)
+    local key = _GetBotTrackerCollapseKey(botName)
+    if Questie.db.char.collapsedZones[key] then
+        Questie.db.char.collapsedZones[key] = nil
+    else
+        Questie.db.char.collapsedZones[key] = true
+    end
+    QuestieTracker:Update()
 end
 
 local function _GetBotTrackerFinisherName(entry)
@@ -1403,7 +1417,8 @@ function QuestieTracker:Update()
             return
         end
 
-        local zoneName = BOT_TRACKER_ZONE_NAME
+        local zoneKey = BOT_TRACKER_ZONE_KEY
+        local zoneName = _GetBotTrackerZoneName()
 
         -- Zone header
         line = TrackerLinePool.GetNextLine()
@@ -1412,7 +1427,7 @@ function QuestieTracker:Update()
         end
 
         line:SetMode("zone")
-        line:SetZone(zoneName)
+        line:SetZone(zoneKey)
         line.expandQuest:Hide()
         line.criteriaMark:Hide()
         line.playButton:Hide()
@@ -1421,7 +1436,7 @@ function QuestieTracker:Update()
         line.label:ClearAllPoints()
         line.label:SetPoint("TOPLEFT", line, "TOPLEFT", 0, 0)
 
-        if Questie.db.char.collapsedZones[zoneName] then
+        if Questie.db.char.collapsedZones[zoneKey] then
             line.expandZone:SetMode(0)
             line.label:SetText("|cFFC0C0C0" .. zoneName .. " +|r")
         else
@@ -1446,12 +1461,15 @@ function QuestieTracker:Update()
         line.Quest = nil
         line.Objective = nil
 
-        if Questie.db.char.collapsedZones[zoneName] then
+        if Questie.db.char.collapsedZones[zoneKey] then
             return
         end
 
         for _, botName in ipairs(botNames) do
             local botCollapseKey = _GetBotTrackerCollapseKey(botName)
+            local currentBotName = botName
+            local botToggleLeft = questMarginLeft - 8
+            local botLabelLeft = questMarginLeft + 10
 
             -- Bot sub-header
             line = TrackerLinePool.GetNextLine()
@@ -1459,9 +1477,8 @@ function QuestieTracker:Update()
                 break
             end
 
-            line:SetMode("zone")
-            line:SetZone(botCollapseKey)
-            line.expandQuest:Hide()
+            line:SetMode("objective")
+            line.expandZone:Hide()
             line.criteriaMark:Hide()
             line.playButton:Hide()
             line:SetScript("OnClick", nil)
@@ -1469,26 +1486,38 @@ function QuestieTracker:Update()
             line.Objective = nil
 
             line.label:ClearAllPoints()
-            line.label:SetPoint("TOPLEFT", line, "TOPLEFT", questMarginLeft, 0)
+            line.label:SetPoint("TOPLEFT", line, "TOPLEFT", botLabelLeft, 0)
 
             if Questie.db.char.collapsedZones[botCollapseKey] then
-                line.expandZone:SetMode(0)
-                line.label:SetText("|cFFC0C0C0" .. botName .. " +|r")
+                line.expandQuest:SetMode(0)
+                line.label:SetText("|cFFC0C0C0" .. botName .. "|r")
             else
-                line.expandZone:SetMode(1)
+                line.expandQuest:SetMode(1)
                 line.label:SetText("|cFFC0C0C0" .. botName .. "|r")
             end
 
-            QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + questMarginLeft + trackerMarginRight)
-            line.label:SetWidth(trackerBaseFrame:GetWidth() - questMarginLeft - trackerMarginRight)
-            line:SetWidth(line.label:GetWidth() + questMarginLeft)
-            trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + questMarginLeft)
+            QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + botLabelLeft + trackerMarginRight)
+            line.label:SetWidth(trackerBaseFrame:GetWidth() - botLabelLeft - trackerMarginRight)
+            line:SetWidth(line.label:GetWidth() + botLabelLeft)
+            trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + botLabelLeft)
 
-            line.expandZone:ClearAllPoints()
-            line.expandZone:SetPoint("TOPLEFT", line, "TOPLEFT", 0, 0)
-            line.expandZone:SetWidth(line.label:GetWidth() + questMarginLeft)
-            line.expandZone:SetHeight(line.label:GetHeight())
-            line.expandZone:Show()
+            line.expandQuest:ClearAllPoints()
+            line.expandQuest:SetPoint("TOPRIGHT", line, "TOPLEFT", botToggleLeft, 1)
+            line.expandQuest.zoneId = nil
+            line.expandQuest:Show()
+
+            line.expandQuest:SetScript("OnClick", function()
+                _ToggleBotTrackerCollapse(currentBotName)
+            end)
+
+            line:SetScript("OnMouseDown", function(_, button)
+                if button == "LeftButton" then
+                    _ToggleBotTrackerCollapse(currentBotName)
+                end
+            end)
+
+            line.expandZone:SetScript("OnClick", nil)
+            line.expandZone:SetScript("OnMouseDown", nil)
 
             line:SetHeight(line.label:GetHeight() + 2)
             line:Show()
@@ -1543,12 +1572,12 @@ function QuestieTracker:Update()
                     line.criteriaMark:SetCriteria(true)
                     line.criteriaMark:Show()
                     statusText = Questie:Colorize(
-                        "Ready to turn in: " .. (entry.finisherName or "?"),
+                        l10n("Ready to turn in: %s", entry.finisherName or "?"),
                         "green"
                     )
                 else
                     line.criteriaMark:Hide()
-                    statusText = Questie:Colorize("In Progress", "white")
+                    statusText = Questie:Colorize(l10n("In Progress"), "white")
                 end
 
                 line.label:ClearAllPoints()
