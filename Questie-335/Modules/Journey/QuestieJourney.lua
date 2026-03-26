@@ -94,6 +94,10 @@ function QuestieJourney:BuildMainFrame()
             {
                 text = l10n('Advanced Search'),
                 value="search"
+            },
+            {
+                text = l10n('Bot Quests'),
+                value="botquests"
             }
         })
         tabGroup:SetCallback("OnGroupSelected", function(widget, _, group) _QuestieJourney:HandleTabChange(widget, group) end)

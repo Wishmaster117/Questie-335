@@ -79,6 +79,8 @@ local Tutorial = QuestieLoader:ImportModule("Tutorial")
 local WorldMapButton = QuestieLoader:ImportModule("WorldMapButton")
 ---@type AvailableQuests
 local AvailableQuests = QuestieLoader:ImportModule("AvailableQuests")
+---@type QuestiePlayerbots
+local QuestiePlayerbots = QuestieLoader:ImportModule("QuestiePlayerbots")
 
 --- COMPATIBILITY ---
 local WOW_PROJECT_ID = QuestieCompat.WOW_PROJECT_ID
@@ -269,6 +271,7 @@ QuestieInit.Stages[3] = function() -- run as a coroutine
     QuestieCoords:Initialize()
     TrackerQuestTimers:Initialize()
     QuestieComms:Initialize()
+    QuestiePlayerbots:Initialize()
 
     QuestieSlash.RegisterSlashCommands()
 

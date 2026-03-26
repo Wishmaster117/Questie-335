@@ -292,7 +292,8 @@ function _Qframe:UpdateTexture(texture)
     --self.data.Icon = texture;
     local colors = { 1, 1, 1 }
 
-    if self.data.IconColor ~= nil and objectiveColor then
+    --if self.data.IconColor ~= nil and objectiveColor then
+	if self.data.IconColor ~= nil and (self.data.ForceColor or objectiveColor) then
         colors = self.data.IconColor
     end
     self.texture:SetVertexColor(colors[1], colors[2], colors[3], alpha);

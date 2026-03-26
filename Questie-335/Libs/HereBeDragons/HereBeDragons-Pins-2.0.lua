@@ -483,7 +483,13 @@ function worldmapProviderPin:OnAcquired(icon, x, y, frameLevelType)
     self.icon = icon
     icon:SetParent(self)
     icon:ClearAllPoints()
-    icon:SetPoint("CENTER", self, "CENTER")
+    icon:SetPoint(
+        "CENTER",
+        self,
+        "CENTER",
+        (icon.data and icon.data.WorldMapPixelOffsetX) or 0,
+        (icon.data and icon.data.WorldMapPixelOffsetY) or 0
+    )
     icon:Show()
 end
 

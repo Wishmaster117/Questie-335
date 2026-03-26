@@ -76,6 +76,10 @@ function _QuestieJourney:HandleTabChange(container, group)
         QuestieSearchResults:DrawSearchTab(container)
         _QuestieJourney.lastOpenWindow = "search"
         return nil
+    elseif group == "botquests" then
+        _QuestieJourney.botQuests:DrawTab(container)
+        _QuestieJourney.lastOpenWindow = "botquests"
+        return nil
     end
 end
 

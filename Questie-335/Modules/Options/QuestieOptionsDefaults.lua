@@ -186,6 +186,11 @@ function QuestieOptionsDefaults:Load()
                 pvp = {},
             },
             journey = {},
+            playerbotsAvailableCache = {
+                version = 1,
+                groupSignature = nil,
+                entries = {},
+            },
             isTrackerExpanded = true,
         },
         global = {

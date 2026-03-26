@@ -33,7 +33,12 @@ function QuestieMap.utils:SetDrawOrder(frame)
 
     -- Draw layer is between -8 and 7, please leave some number above so we don't paint ourselves into a corner...
     -- These are sorted by order of most common occurrence to reduce if checks; it's less readable but more performant with so many icons
+    --if frame.data then
     if frame.data then
+        if frame.data.DrawPriority then
+            frame.texture:SetDrawLayer("OVERLAY", frame.data.DrawPriority)
+            return
+        end
         if frame.data.Icon == Questie.ICON_TYPE_AVAILABLE then
             frame.texture:SetDrawLayer("OVERLAY", 5)
         elseif frame.data.Icon == Questie.ICON_TYPE_REPEATABLE then

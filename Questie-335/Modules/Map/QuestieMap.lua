@@ -498,7 +498,12 @@ function QuestieMap:DrawManualIcon(data, areaID, x, y, typ)
         return nil, nil
     end
     -- set the icon
-    local texture = data.Icon or "Interface\\WorldMap\\WorldMapPartyIcon"
+    -- local texture = data.Icon or "Interface\\WorldMap\\WorldMapPartyIcon"
+    local texture = data.Icon
+    if type(texture) == "number" then
+        texture = Questie.usedIcons[texture]
+    end
+    texture = texture or "Interface\\WorldMap\\WorldMapPartyIcon"	
     -- Save new zone ID format, used in QuestieFramePool
     -- create a list for all frames belonging to a NPC (id > 0) or an object (id < 0)
     typ = typ or "any"
@@ -509,41 +514,83 @@ function QuestieMap:DrawManualIcon(data, areaID, x, y, typ)
         QuestieMap.manualFrames[typ][data.id] = {}
     end
 
+    local mapX = x + (data.WorldMapOffsetX or 0)
+    local mapY = y + (data.WorldMapOffsetY or 0)
+    local miniMapX = x + (data.MiniMapOffsetX or 0)
+    local miniMapY = y + (data.MiniMapOffsetY or 0)
+
     -- create the map icon
     local icon = QuestieFramePool:GetFrame()
     icon.data = data
-    icon.x = x
-    icon.y = y
+    --icon.x = x
+    --icon.y = y
+    icon.x = mapX
+    icon.y = mapY
     icon.AreaID = areaID -- used by QuestieFramePool
     icon.UiMapID = uiMapId
     icon.miniMapIcon = false;
-    icon.texture:SetTexture(texture)
-    icon:SetWidth(16 * (data:GetIconScale() or 0.7))
-    icon:SetHeight(16 * (data:GetIconScale() or 0.7))
+    local colorsMap = { 1, 1, 1 }
+    if data.IconColor ~= nil and (data.ForceColor or Questie.db.profile.questObjectiveColors) then
+        colorsMap = data.IconColor
+    end
+
+    --icon:UpdateTexture(texture)
+    --icon.texture:SetVertexColor(colorsMap[1], colorsMap[2], colorsMap[3], 1)
+    --icon:SetWidth(16 * (data:GetIconScale() or 0.7))
+    --icon:SetHeight(16 * (data:GetIconScale() or 0.7))
+    local mapIconSize = 16 * (data:GetIconScale() or 0.7)
+    local worldMapTextureOffsetX = data.WorldMapTextureOffsetX or 0
+    local worldMapTextureOffsetY = data.WorldMapTextureOffsetY or 0
+
+    icon:UpdateTexture(texture)
+    icon.texture:ClearAllPoints()
+    icon.texture:SetWidth(mapIconSize)
+    icon.texture:SetHeight(mapIconSize)
+    icon.texture:SetPoint("CENTER", icon, "CENTER", worldMapTextureOffsetX, worldMapTextureOffsetY)
+    icon.texture:SetVertexColor(colorsMap[1], colorsMap[2], colorsMap[3], 1)
+    icon:SetWidth(mapIconSize + (2 * math.abs(worldMapTextureOffsetX)))
+    icon:SetHeight(mapIconSize + (2 * math.abs(worldMapTextureOffsetY)))
 
     -- add the map icon
-    QuestieMap:QueueDraw(QuestieMap.ICON_MAP_TYPE, Questie, icon, icon.UiMapID, x / 100, y / 100, 3) -- showFlag)
+    --QuestieMap:QueueDraw(QuestieMap.ICON_MAP_TYPE, Questie, icon, icon.UiMapID, x / 100, y / 100, 3) -- showFlag)
+	QuestieMap:QueueDraw(QuestieMap.ICON_MAP_TYPE, Questie, icon, icon.UiMapID, mapX / 100, mapY / 100, 3) -- showFlag)
     tinsert(QuestieMap.manualFrames[typ][data.id], icon:GetName())
 
     -- create the minimap icon
     local iconMinimap = QuestieFramePool:GetFrame()
     local colorsMinimap = { 1, 1, 1 }
-    if data.IconColor ~= nil and Questie.db.profile.questMinimapObjectiveColors then
+    --if data.IconColor ~= nil and Questie.db.profile.questMinimapObjectiveColors then
+    if data.IconColor ~= nil and (data.ForceColor or Questie.db.profile.questMinimapObjectiveColors) then
         colorsMinimap = data.IconColor
     end
-    iconMinimap:SetWidth(16 * ((data:GetIconScale() or 1) * (Questie.db.profile.globalMiniMapScale or 0.7)))
-    iconMinimap:SetHeight(16 * ((data:GetIconScale() or 1) * (Questie.db.profile.globalMiniMapScale or 0.7)))
+    --iconMinimap:SetWidth(16 * ((data:GetIconScale() or 1) * (Questie.db.profile.globalMiniMapScale or 0.7)))
+    --iconMinimap:SetHeight(16 * ((data:GetIconScale() or 1) * (Questie.db.profile.globalMiniMapScale or 0.7)))
+    local minimapIconSize = 16 * ((data:GetIconScale() or 1) * (Questie.db.profile.globalMiniMapScale or 0.7))
+    local miniMapTextureOffsetX = data.MiniMapTextureOffsetX or 0
+    local miniMapTextureOffsetY = data.MiniMapTextureOffsetY or 0
+
+    iconMinimap:SetWidth(minimapIconSize + (2 * math.abs(miniMapTextureOffsetX)))
+    iconMinimap:SetHeight(minimapIconSize + (2 * math.abs(miniMapTextureOffsetY)))	
     iconMinimap.data = data
-    iconMinimap.x = x
-    iconMinimap.y = y
+    --iconMinimap.x = x
+    --iconMinimap.y = y
+    iconMinimap.x = miniMapX
+    iconMinimap.y = miniMapY
     iconMinimap.AreaID = areaID -- used by QuestieFramePool
     iconMinimap.UiMapID = uiMapId
+    --iconMinimap.texture:SetTexture(texture)
+    --iconMinimap.texture:SetVertexColor(colorsMinimap[1], colorsMinimap[2], colorsMinimap[3], 1);
     iconMinimap.texture:SetTexture(texture)
-    iconMinimap.texture:SetVertexColor(colorsMinimap[1], colorsMinimap[2], colorsMinimap[3], 1);
+    iconMinimap.texture:ClearAllPoints()
+    iconMinimap.texture:SetWidth(minimapIconSize)
+    iconMinimap.texture:SetHeight(minimapIconSize)
+    iconMinimap.texture:SetPoint("CENTER", iconMinimap, "CENTER", miniMapTextureOffsetX, miniMapTextureOffsetY)
+    iconMinimap.texture:SetVertexColor(colorsMinimap[1], colorsMinimap[2], colorsMinimap[3], 1);	
     iconMinimap.miniMapIcon = true;
 
     -- add the minimap icon
-    QuestieMap:QueueDraw(QuestieMap.ICON_MINIMAP_TYPE, Questie, iconMinimap, iconMinimap.UiMapID, x / 100, y / 100, true, true);
+    --QuestieMap:QueueDraw(QuestieMap.ICON_MINIMAP_TYPE, Questie, iconMinimap, iconMinimap.UiMapID, x / 100, y / 100, true, true);
+	QuestieMap:QueueDraw(QuestieMap.ICON_MINIMAP_TYPE, Questie, iconMinimap, iconMinimap.UiMapID, miniMapX / 100, miniMapY / 100, true, true);
     tinsert(QuestieMap.manualFrames[typ][data.id], iconMinimap:GetName())
 
     -- make sure notes are only shown when they are supposed to
