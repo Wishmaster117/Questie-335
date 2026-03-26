@@ -37,6 +37,8 @@ local QuestEventHandler = QuestieLoader:ImportModule("QuestEventHandler")
 local _QuestEventHandler = QuestEventHandler.private
 ---@type QuestieDB
 local QuestieDB = QuestieLoader:ImportModule("QuestieDB")
+---@type QuestiePlayerbots
+local QuestiePlayerbots = QuestieLoader:ImportModule("QuestiePlayerbots")
 ---@type l10n
 local l10n = QuestieLoader:ImportModule("l10n")
 ---@type QuestieDebugOffer
@@ -83,6 +85,88 @@ local isFirstRun = true
 local allowFormattingUpdate = false
 local trackerBaseFrame, trackerHeaderFrame, trackerQuestFrame
 local QuestLogFrame = QuestLogExFrame or ClassicQuestLog or QuestLogFrame
+
+local BOT_TRACKER_ZONE_NAME = "Bot Quests"
+
+local function _GetBotTrackerCollapseKey(botName)
+    return BOT_TRACKER_ZONE_NAME .. "::" .. tostring(botName)
+end
+
+local function _GetBotTrackerFinisherName(entry)
+    if not entry then
+        return nil
+    end
+
+    if entry.finisherType == "monster" and entry.finisherId then
+        return QuestieDB.QueryNPCSingle(entry.finisherId, "name") or ("NPC " .. tostring(entry.finisherId))
+    elseif entry.finisherType == "object" and entry.finisherId then
+        return QuestieDB.QueryObjectSingle(entry.finisherId, "name") or ("Object " .. tostring(entry.finisherId))
+    end
+
+    return nil
+end
+
+local function _GetBotTrackerQuestText(entry)
+    local questName = entry.questName or ("Quest " .. tostring(entry.questId))
+    local quest = QuestieDB.GetQuest(entry.questId)
+    local questLevel = quest and quest.level or nil
+
+    if Questie.db.profile.trackerShowQuestLevel and questLevel then
+        questName = "[" .. tostring(questLevel) .. "] " .. questName
+    end
+
+    if entry.state == "completed" then
+        return "|cFF4CFF4C" .. questName .. "|r"
+    end
+
+    return QuestieLib:GetColoredQuestName(entry.questId, Questie.db.profile.trackerShowQuestLevel, false, false) or questName
+end
+
+local function _GetBotTrackerEntries()
+    local bots = nil
+    if QuestiePlayerbots and QuestiePlayerbots.GetPersistentQuestStateCache then
+        bots = select(1, QuestiePlayerbots:GetPersistentQuestStateCache())
+    end
+
+    if not bots then
+        return nil, nil
+    end
+
+    local botNames = {}
+    local entriesByBot = {}
+
+    for botName, botEntries in pairs(bots) do
+        local entries = {}
+
+        for questId, entry in pairs(botEntries or {}) do
+            local numericQuestId = tonumber(questId)
+            if numericQuestId and entry and (entry.state == "active" or entry.state == "completed") then
+                entries[#entries + 1] = {
+                    questId       = numericQuestId,
+                    questName     = QuestieDB.QueryQuestSingle(numericQuestId, "name") or ("Quest " .. tostring(numericQuestId)),
+                    state         = entry.state,
+                    finisherName  = _GetBotTrackerFinisherName(entry),
+                }
+            end
+        end
+
+        if #entries > 0 then
+            table.sort(entries, function(a, b)
+                local stateOrderA = (a.state == "completed") and 1 or 2
+                local stateOrderB = (b.state == "completed") and 1 or 2
+                if stateOrderA ~= stateOrderB then
+                    return stateOrderA < stateOrderB
+                end
+                return a.questName < b.questName
+            end)
+            botNames[#botNames + 1] = botName
+            entriesByBot[botName] = entries
+        end
+    end
+
+    table.sort(botNames)
+    return botNames, entriesByBot
+end
 
 function QuestieTracker.Initialize()
     if QuestieTracker.started then
@@ -1313,6 +1397,177 @@ function QuestieTracker:Update()
         end
     end
 
+    local _UpdateBotQuests = function()
+        local botNames, entriesByBot = _GetBotTrackerEntries()
+        if not botNames or #botNames == 0 then
+            return
+        end
+
+        local zoneName = BOT_TRACKER_ZONE_NAME
+
+        -- Zone header
+        line = TrackerLinePool.GetNextLine()
+        if not line then
+            return
+        end
+
+        line:SetMode("zone")
+        line:SetZone(zoneName)
+        line.expandQuest:Hide()
+        line.criteriaMark:Hide()
+        line.playButton:Hide()
+        line:SetScript("OnClick", nil)
+
+        line.label:ClearAllPoints()
+        line.label:SetPoint("TOPLEFT", line, "TOPLEFT", 0, 0)
+
+        if Questie.db.char.collapsedZones[zoneName] then
+            line.expandZone:SetMode(0)
+            line.label:SetText("|cFFC0C0C0" .. zoneName .. " +|r")
+        else
+            line.expandZone:SetMode(1)
+            line.label:SetText("|cFFC0C0C0" .. zoneName .. "|r")
+        end
+
+        QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + trackerMarginLeft + trackerMarginRight)
+        line.label:SetWidth(trackerBaseFrame:GetWidth() - trackerMarginLeft - trackerMarginRight)
+        line:SetWidth(line.label:GetWidth())
+        trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + trackerMarginLeft)
+
+        line.expandZone:ClearAllPoints()
+        line.expandZone:SetPoint("TOPLEFT", line, "TOPLEFT", 0, 0)
+        line.expandZone:SetWidth(line.label:GetWidth())
+        line.expandZone:SetHeight(line.label:GetHeight())
+        line.expandZone:Show()
+
+        line:SetHeight(line.label:GetHeight() + 4)
+        line:Show()
+        line.label:Show()
+        line.Quest = nil
+        line.Objective = nil
+
+        if Questie.db.char.collapsedZones[zoneName] then
+            return
+        end
+
+        for _, botName in ipairs(botNames) do
+            local botCollapseKey = _GetBotTrackerCollapseKey(botName)
+
+            -- Bot sub-header
+            line = TrackerLinePool.GetNextLine()
+            if not line then
+                break
+            end
+
+            line:SetMode("zone")
+            line:SetZone(botCollapseKey)
+            line.expandQuest:Hide()
+            line.criteriaMark:Hide()
+            line.playButton:Hide()
+            line:SetScript("OnClick", nil)
+            line.Quest = nil
+            line.Objective = nil
+
+            line.label:ClearAllPoints()
+            line.label:SetPoint("TOPLEFT", line, "TOPLEFT", questMarginLeft, 0)
+
+            if Questie.db.char.collapsedZones[botCollapseKey] then
+                line.expandZone:SetMode(0)
+                line.label:SetText("|cFFC0C0C0" .. botName .. " +|r")
+            else
+                line.expandZone:SetMode(1)
+                line.label:SetText("|cFFC0C0C0" .. botName .. "|r")
+            end
+
+            QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + questMarginLeft + trackerMarginRight)
+            line.label:SetWidth(trackerBaseFrame:GetWidth() - questMarginLeft - trackerMarginRight)
+            line:SetWidth(line.label:GetWidth() + questMarginLeft)
+            trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + questMarginLeft)
+
+            line.expandZone:ClearAllPoints()
+            line.expandZone:SetPoint("TOPLEFT", line, "TOPLEFT", 0, 0)
+            line.expandZone:SetWidth(line.label:GetWidth() + questMarginLeft)
+            line.expandZone:SetHeight(line.label:GetHeight())
+            line.expandZone:Show()
+
+            line:SetHeight(line.label:GetHeight() + 2)
+            line:Show()
+            line.label:Show()
+
+            if not Questie.db.char.collapsedZones[botCollapseKey] then
+                for _, entry in ipairs(entriesByBot[botName]) do
+                -- Quest title
+                line = TrackerLinePool.GetNextLine()
+                if not line then
+                    break
+                end
+
+                line:SetMode("quest")
+                line.expandZone:Hide()
+                line.expandQuest:Hide()
+                line.criteriaMark:Hide()
+                line.playButton:Hide()
+                line:SetScript("OnClick", nil)
+                line.Quest = nil
+                line.Objective = nil
+
+                line.label:ClearAllPoints()
+                line.label:SetPoint("TOPLEFT", line, "TOPLEFT", questMarginLeft, 0)
+                line.label:SetText(_GetBotTrackerQuestText(entry))
+
+                QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + questMarginLeft + trackerMarginRight)
+                line.label:SetWidth(trackerBaseFrame:GetWidth() - questMarginLeft - trackerMarginRight)
+                line:SetWidth(line.label:GetWidth() + questMarginLeft)
+                trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + questMarginLeft)
+
+                line:SetHeight(line.label:GetHeight() + 1)
+                line:Show()
+                line.label:Show()
+
+                -- Quest status / tracking line
+                line = TrackerLinePool.GetNextLine()
+                if not line then
+                    break
+                end
+
+                line:SetMode("objective")
+                line.expandZone:Hide()
+                line.expandQuest:Hide()
+                line.playButton:Hide()
+                line:SetScript("OnClick", nil)
+                line.Quest = nil
+                line.Objective = nil
+
+                local statusText
+                if entry.state == "completed" then
+                    line.criteriaMark:SetCriteria(true)
+                    line.criteriaMark:Show()
+                    statusText = Questie:Colorize(
+                        "Ready to turn in: " .. (entry.finisherName or "?"),
+                        "green"
+                    )
+                else
+                    line.criteriaMark:Hide()
+                    statusText = Questie:Colorize("In Progress", "white")
+                end
+
+                line.label:ClearAllPoints()
+                line.label:SetPoint("TOPLEFT", line, "TOPLEFT", objectiveMarginLeft, 0)
+                line.label:SetText(statusText)
+
+                QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + objectiveMarginLeft + trackerMarginRight)
+                line.label:SetWidth(trackerBaseFrame:GetWidth() - objectiveMarginLeft - trackerMarginRight)
+                line:SetWidth(line.label:GetWidth() + objectiveMarginLeft)
+                trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + objectiveMarginLeft)
+
+                line:SetHeight(line.label:GetHeight() + (Questie.db.profile.trackerQuestPadding + 1))
+                line:Show()
+                line.label:Show()
+                end
+            end
+        end
+    end
+
     -- Begin populating the tracker with achievements
     local _UpdateAchievements = function()
         -- Begin populating the tracker with achievements
@@ -2129,9 +2384,11 @@ function QuestieTracker:Update()
         _UpdateAchievements()
         _UpdatePerks()
         _UpdateQuests()
+        _UpdateBotQuests()
     else
         _UpdatePerks()
         _UpdateQuests()
+        _UpdateBotQuests()
         _UpdateAchievements()
     end
 

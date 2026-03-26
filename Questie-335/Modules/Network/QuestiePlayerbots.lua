@@ -678,6 +678,14 @@ end
 local function _ScheduleRestore(delay)
     C_Timer.After(delay or 0, function()
         _RebuildVisibleNotesFromCache()
+
+        local QuestieTracker = QuestieLoader:ImportModule("QuestieTracker")
+        if QuestieTracker
+            and QuestieTracker.started
+            and QuestieTracker.Update
+        then
+            QuestieTracker:Update()
+        end
     end)
 end
 
