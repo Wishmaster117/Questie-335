@@ -63,44 +63,60 @@ end
 -- Tab Drawing
 --------------------------------------------------------------------------------
 
-function _QuestieJourney.botQuests:DrawTab(container)
-
-    -- Header
+local function _DrawBotQuestTab(container, isArchived)
     local header = AceGUI:Create("Heading")
-    header:SetText(l10n('Cached Bot Quests'))
+    header:SetText(isArchived and l10n('Archived Bot Quests') or l10n('Cached Bot Quests'))
     header:SetFullWidth(true)
     container:AddChild(header)
 
     QuestieJourneyUtils:Spacer(container)
 
-    -- Group signature info
-    local bots, groupSignature = QuestiePlayerbots:GetPersistentQuestStateCache()
+    local bots, signature
+    local infoPrefix
+    local emptyInfoText
+    local emptyListText
+
+    if isArchived then
+        if QuestiePlayerbots.GetArchivedQuestStateCache then
+            bots, signature = QuestiePlayerbots:GetArchivedQuestStateCache()
+        else
+            bots, signature = {}, nil
+        end
+        infoPrefix    = l10n('Archived bots: ')
+        emptyInfoText = l10n('No archived bot quest cache yet.')
+        emptyListText = l10n('No archived bot quests yet.')
+    else
+        if QuestiePlayerbots.GetCurrentGroupOnlineQuestStateCache then
+            bots, signature = QuestiePlayerbots:GetCurrentGroupOnlineQuestStateCache()
+        else
+            bots, signature = QuestiePlayerbots:GetPersistentQuestStateCache()
+        end
+        infoPrefix    = l10n('Cached group: ')
+        emptyInfoText = l10n('No persistent bot quest cache for the current group yet.')
+        emptyListText = l10n('No cached bot quests yet. Scan a quest giver once with your bots in group.')
+    end
 
     local info = AceGUI:Create("Label")
     info:SetFullWidth(true)
 
-    if groupSignature then
+    if signature then
         info:SetText(
-            Questie:Colorize(l10n('Cached group: '), 'yellow') ..
-            Questie:Colorize(groupSignature:gsub('|', ', '), 'gray')
+            Questie:Colorize(infoPrefix, 'yellow') ..
+            Questie:Colorize(signature:gsub('|', ', '), 'gray')
         )
     else
-        info:SetText(
-            Questie:Colorize(l10n('No persistent bot quest cache for the current group yet.'), 'yellow')
-        )
+        info:SetText(Questie:Colorize(emptyInfoText, 'yellow'))
     end
 
     container:AddChild(info)
     QuestieJourneyUtils:Spacer(container)
 
-    -- Scroll frame
     local scrollFrame = AceGUI:Create("ScrollFrame")
     scrollFrame:SetLayout("Flow")
     scrollFrame:SetFullWidth(true)
     scrollFrame:SetFullHeight(true)
     container:AddChild(scrollFrame)
 
-    -- Sort entries by state
     local availableBucket = {}
     local activeBucket    = {}
     local completedBucket = {}
@@ -121,23 +137,18 @@ function _QuestieJourney.botQuests:DrawTab(container)
     local activeEntries    = _FlattenBucket(activeBucket)
     local completedEntries = _FlattenBucket(completedBucket)
 
-    -- Empty state
     if #availableEntries == 0 and #activeEntries == 0 and #completedEntries == 0 then
         local empty = AceGUI:Create("Label")
         empty:SetFullWidth(true)
-        empty:SetText(
-            Questie:Colorize(
-                l10n('No cached bot quests yet. Scan a quest giver once with your bots in group.'),
-                'yellow'
-            )
-        )
+        empty:SetText(Questie:Colorize(emptyListText, 'yellow'))
         scrollFrame:AddChild(empty)
         return
     end
 
-    -- Section renderer
     local function DrawSection(titleText, entries, color)
-        if #entries == 0 then return end
+        if #entries == 0 then
+            return
+        end
 
         local heading = AceGUI:Create("Heading")
         heading:SetText(titleText)
@@ -148,7 +159,6 @@ function _QuestieJourney.botQuests:DrawTab(container)
             local questName = QuestieDB.QueryQuestSingle(entry.questId, "name")
                 or ("Quest " .. tostring(entry.questId))
 
-            -- Quest name + bot names
             local line = AceGUI:Create("Label")
             line:SetFullWidth(true)
             line:SetText(
@@ -159,7 +169,6 @@ function _QuestieJourney.botQuests:DrawTab(container)
             )
             scrollFrame:AddChild(line)
 
-            -- Meta information
             local metaParts = {}
 
             if entry.starterNpcId then
@@ -174,7 +183,6 @@ function _QuestieJourney.botQuests:DrawTab(container)
                     l10n('Finisher: ') ..
                     (QuestieDB.QueryNPCSingle(entry.finisherId, "name")
                         or ("NPC " .. tostring(entry.finisherId)))
-
             elseif entry.finisherType == "object" and entry.finisherId then
                 metaParts[#metaParts + 1] =
                     l10n('Finisher: ') ..
@@ -188,17 +196,22 @@ function _QuestieJourney.botQuests:DrawTab(container)
 
             local meta = AceGUI:Create("Label")
             meta:SetFullWidth(true)
-            meta:SetText(
-                "   " .. Questie:Colorize(tconcat(metaParts, "  "), 'gray')
-            )
+            meta:SetText("   " .. Questie:Colorize(tconcat(metaParts, "  "), 'gray'))
             scrollFrame:AddChild(meta)
 
             QuestieJourneyUtils:Spacer(scrollFrame)
         end
     end
 
-    -- Draw all three sections
     DrawSection(l10n('Available'),   availableEntries, 'yellow')
     DrawSection(l10n('In Progress'), activeEntries,    'white')
     DrawSection(l10n('Completed'),   completedEntries, 'green')
+end
+
+function _QuestieJourney.botQuests:DrawTab(container)
+    _DrawBotQuestTab(container, false)
+end
+
+function _QuestieJourney.botQuests:DrawArchivedTab(container)
+    _DrawBotQuestTab(container, true)
 end

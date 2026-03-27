@@ -98,6 +98,10 @@ function QuestieJourney:BuildMainFrame()
             {
                 text = l10n('Bot Quests'),
                 value="botquests"
+            },
+            {
+                text = l10n('Archived Bot Quests'),
+                value="botquests_archived"
             }
         })
         tabGroup:SetCallback("OnGroupSelected", function(widget, _, group) _QuestieJourney:HandleTabChange(widget, group) end)

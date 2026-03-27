@@ -80,6 +80,10 @@ function _QuestieJourney:HandleTabChange(container, group)
         _QuestieJourney.botQuests:DrawTab(container)
         _QuestieJourney.lastOpenWindow = "botquests"
         return nil
+    elseif group == "botquests_archived" then
+        _QuestieJourney.botQuests:DrawArchivedTab(container)
+        _QuestieJourney.lastOpenWindow = "botquests_archived"		
+        return nil
     end
 end
 

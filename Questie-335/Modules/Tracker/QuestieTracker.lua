@@ -138,7 +138,9 @@ end
 
 local function _GetBotTrackerEntries()
     local bots = nil
-    if QuestiePlayerbots and QuestiePlayerbots.GetPersistentQuestStateCache then
+    if QuestiePlayerbots and QuestiePlayerbots.GetCurrentGroupOnlineQuestStateCache then
+        bots = select(1, QuestiePlayerbots:GetCurrentGroupOnlineQuestStateCache())
+    elseif QuestiePlayerbots and QuestiePlayerbots.GetPersistentQuestStateCache then
         bots = select(1, QuestiePlayerbots:GetPersistentQuestStateCache())
     end
 
@@ -160,6 +162,7 @@ local function _GetBotTrackerEntries()
                     questName     = QuestieDB.QueryQuestSingle(numericQuestId, "name") or ("Quest " .. tostring(numericQuestId)),
                     state         = entry.state,
                     finisherName  = _GetBotTrackerFinisherName(entry),
+                    progressLines = QuestiePlayerbots.GetBotQuestProgressLines and QuestiePlayerbots:GetBotQuestProgressLines(botName, numericQuestId) or nil,
                 }
             end
         end
@@ -1553,45 +1556,77 @@ function QuestieTracker:Update()
                 line:Show()
                 line.label:Show()
 
-                -- Quest status / tracking line
-                line = TrackerLinePool.GetNextLine()
-                if not line then
-                    break
+                local function _RenderBotObjectiveLine(statusText, showCriteriaMark)
+                    line = TrackerLinePool.GetNextLine()
+                    if not line then
+                        return false
+                    end
+
+                    line:SetMode("objective")
+                    line.expandZone:Hide()
+                    line.expandQuest:Hide()
+                    line.playButton:Hide()
+                    line:SetScript("OnClick", nil)
+                    line.Quest = nil
+                    line.Objective = nil
+
+                    if showCriteriaMark then
+                        line.criteriaMark:SetCriteria(true)
+                        line.criteriaMark:Show()
+                    else
+                        line.criteriaMark:Hide()
+                    end
+
+                    line.label:ClearAllPoints()
+                    line.label:SetPoint("TOPLEFT", line, "TOPLEFT", objectiveMarginLeft, 0)
+                    line.label:SetText(statusText)
+
+                    QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + objectiveMarginLeft + trackerMarginRight)
+                    line.label:SetWidth(trackerBaseFrame:GetWidth() - objectiveMarginLeft - trackerMarginRight)
+                    line:SetWidth(line.label:GetWidth() + objectiveMarginLeft)
+                    trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + objectiveMarginLeft)
+
+                    line:SetHeight(line.label:GetHeight() + (Questie.db.profile.trackerQuestPadding + 1))
+                    line:Show()
+                    line.label:Show()
+
+                    return true
                 end
 
-                line:SetMode("objective")
-                line.expandZone:Hide()
-                line.expandQuest:Hide()
-                line.playButton:Hide()
-                line:SetScript("OnClick", nil)
-                line.Quest = nil
-                line.Objective = nil
-
-                local statusText
                 if entry.state == "completed" then
-                    line.criteriaMark:SetCriteria(true)
-                    line.criteriaMark:Show()
-                    statusText = Questie:Colorize(
-                        l10n("Ready to turn in: %s", entry.finisherName or "?"),
-                        "green"
-                    )
+                    if not _RenderBotObjectiveLine(
+                        Questie:Colorize(
+                            l10n("Ready to turn in: %s", entry.finisherName or "?"),
+                            "green"
+                        ),
+                        true
+                    ) then
+                        break
+                    end
+                elseif entry.progressLines and #entry.progressLines > 0 then
+                    local renderedAllProgressLines = true
+
+                    for _, progressLine in ipairs(entry.progressLines) do
+                        if not _RenderBotObjectiveLine(
+                            Questie:Colorize(progressLine, "white"),
+                            false
+                        ) then
+                            renderedAllProgressLines = false
+                            break
+                        end
+                    end
+
+                    if not renderedAllProgressLines then
+                        break
+                    end
                 else
-                    line.criteriaMark:Hide()
-                    statusText = Questie:Colorize(l10n("In Progress"), "white")
+                    if not _RenderBotObjectiveLine(
+                        Questie:Colorize(l10n("In Progress"), "white"),
+                        false
+                    ) then
+                        break
+                    end
                 end
-
-                line.label:ClearAllPoints()
-                line.label:SetPoint("TOPLEFT", line, "TOPLEFT", objectiveMarginLeft, 0)
-                line.label:SetText(statusText)
-
-                QuestieTracker:UpdateWidth(line.label:GetUnboundedStringWidth() + objectiveMarginLeft + trackerMarginRight)
-                line.label:SetWidth(trackerBaseFrame:GetWidth() - objectiveMarginLeft - trackerMarginRight)
-                line:SetWidth(line.label:GetWidth() + objectiveMarginLeft)
-                trackerLineWidth = math.max(trackerLineWidth, line.label:GetUnboundedStringWidth() + objectiveMarginLeft)
-
-                line:SetHeight(line.label:GetHeight() + (Questie.db.profile.trackerQuestPadding + 1))
-                line:Show()
-                line.label:Show()
                 end
             end
         end
