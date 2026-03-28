@@ -19,7 +19,7 @@ local C_Timer = QuestieCompat.C_Timer
 local AVAILABLE_NOTE_TYPE = "playerbots_available"
 local COMPLETE_NOTE_TYPE  = "playerbots_complete"
 local BOT_ICON_COLOR      = { 1.00, 0.00, 1.00 }
-local DEBUG_PLAYERBOTS    = false
+local DEBUG_PLAYERBOTS    = true
 local BOT_SCAN_TIMEOUT    = 1.0
 local QUEST_LIST_SYNC_TIMEOUT = 1.25
 
@@ -216,6 +216,22 @@ local function _NormalizeObjectiveLabel(text)
     return text
 end
 
+local function _NormalizeObjectiveProgressLabel(text)
+    text = _NormalizeObjectiveLabel(text)
+    if not text or text == "" then
+        return nil
+    end
+
+    -- Les whispers bots ajoutent parfois un suffixe d'action qui ne fait pas
+    -- partie du vrai libellé d'objectif.
+    text = text:gsub("%s+[Tt][Uu][ÉéEe][Ss]?$", "")
+    text = text:gsub("%s+[Kk][Ii][Ll][Ll][Ee][Dd]$", "")
+    text = text:gsub("%s+[Ss][Ll][Aa][Ii][Nn]$", "")
+    text = _Trim(text)
+
+    return (text and text ~= "") and text or nil
+end
+
 local function _ParseBotObjectiveProgressMessage(message)
     local cleanMessage = _StripWoWFormatting(message)
     cleanMessage = _Trim(cleanMessage)
@@ -365,6 +381,131 @@ local function _GetPlayerQuestObjectiveTemplate(questId)
     return template
 end
 
+local function _GetTemplateEntryNeededCount(templateEntry)
+    return tonumber(templateEntry and templateEntry.needed or 0) or 0
+end
+
+local function _GetObjectiveEntryNeededCount(objectiveEntry)
+    return tonumber(objectiveEntry and objectiveEntry.needed or 0) or 0
+end
+
+local function _FindObjectiveKeyForTemplateEntry(requirements, templateEntry, usedObjectiveKeys)
+    if not requirements or not templateEntry then
+        return nil
+    end
+
+    local normalizedTemplateName = _NormalizeObjectiveLabel(templateEntry.displayName)
+    local templateNeededCount = _GetTemplateEntryNeededCount(templateEntry)
+
+    local exactMatches = {}
+    local partialMatches = {}
+    local neededMatches = {}
+
+    local function _PushUnique(list, seen, objectiveKey)
+        if objectiveKey and not seen[objectiveKey] then
+            seen[objectiveKey] = true
+            list[#list + 1] = objectiveKey
+        end
+    end
+
+    local exactSeen = {}
+    local partialSeen = {}
+    local neededSeen = {}
+
+    for _, objectiveKey in ipairs(requirements.orderedKeys or {}) do
+        if not usedObjectiveKeys or not usedObjectiveKeys[objectiveKey] then
+            local objectiveEntry = requirements.objectives and requirements.objectives[objectiveKey] or nil
+            if objectiveEntry then
+                local normalizedDisplayName = _NormalizeObjectiveLabel(objectiveEntry.displayName)
+                local isExact = false
+                local isPartial = false
+
+                if normalizedTemplateName and normalizedDisplayName then
+                    if normalizedTemplateName == normalizedDisplayName then
+                        isExact = true
+                    elseif normalizedTemplateName:find(normalizedDisplayName, 1, true)
+                        or normalizedDisplayName:find(normalizedTemplateName, 1, true)
+                    then
+                        isPartial = true
+                    end
+                end
+
+                for _, alias in ipairs(objectiveEntry.aliases or {}) do
+                    if normalizedTemplateName and alias then
+                        if normalizedTemplateName == alias then
+                            isExact = true
+                            isPartial = false
+                            break
+                        elseif normalizedTemplateName:find(alias, 1, true)
+                            or alias:find(normalizedTemplateName, 1, true)
+                        then
+                            isPartial = true
+                        end
+                    end
+                end
+
+                if isExact then
+                    _PushUnique(exactMatches, exactSeen, objectiveKey)
+                elseif isPartial then
+                    _PushUnique(partialMatches, partialSeen, objectiveKey)
+                end
+
+                if templateNeededCount > 0 and _GetObjectiveEntryNeededCount(objectiveEntry) == templateNeededCount then
+                    _PushUnique(neededMatches, neededSeen, objectiveKey)
+                end
+            end
+        end
+    end
+
+    if #exactMatches == 1 then
+        return exactMatches[1]
+    end
+
+    if #exactMatches > 1 and templateNeededCount > 0 then
+        local narrowed = {}
+        for _, objectiveKey in ipairs(exactMatches) do
+            local objectiveEntry = requirements.objectives[objectiveKey]
+            if _GetObjectiveEntryNeededCount(objectiveEntry) == templateNeededCount then
+                narrowed[#narrowed + 1] = objectiveKey
+            end
+        end
+        if #narrowed == 1 then
+            return narrowed[1]
+        end
+    end
+
+    if #partialMatches == 1 then
+        return partialMatches[1]
+    end
+
+    if #neededMatches == 1 then
+        return neededMatches[1]
+    end
+
+    return nil
+end
+
+local function _BackfillObjectiveNeededCountsFromPlayerTemplate(questId, requirements)
+    local playerObjectiveTemplate = _GetPlayerQuestObjectiveTemplate(questId)
+    if not playerObjectiveTemplate or #playerObjectiveTemplate == 0 then
+        return
+    end
+
+    local usedObjectiveKeys = {}
+    for _, templateEntry in ipairs(playerObjectiveTemplate) do
+        local objectiveKey = _FindObjectiveKeyForTemplateEntry(requirements, templateEntry, usedObjectiveKeys)
+        if objectiveKey then
+            usedObjectiveKeys[objectiveKey] = true
+
+            local objectiveEntry = requirements.objectives and requirements.objectives[objectiveKey] or nil
+            local templateNeededCount = _GetTemplateEntryNeededCount(templateEntry)
+            if objectiveEntry and templateNeededCount > 0 and _GetObjectiveEntryNeededCount(objectiveEntry) <= 0 then
+                objectiveEntry.needed = templateNeededCount
+            end
+        end
+    end
+end
+
 local function _GetQuestObjectiveRequirements(questId)
     if questObjectiveCache and questObjectiveCache[questId] then
         return questObjectiveCache[questId]
@@ -458,6 +599,8 @@ local function _GetQuestObjectiveRequirements(questId)
         result.isFullyInferable = false
     end
 
+    _BackfillObjectiveNeededCountsFromPlayerTemplate(questId, result)
+
     for _, objectiveEntry in pairs(result.objectives) do
         objectiveEntry.aliasLookup = nil
     end
@@ -502,6 +645,33 @@ local function _GetObjectiveCandidateWordCounts(objectiveEntry)
     return counts
 end
 
+local function _FindUniqueUnresolvedObjectiveKeyByNeededCount(entry, requirements, neededCount)
+    neededCount = tonumber(neededCount or 0) or 0
+    if neededCount <= 0 or not entry or not requirements then
+        return nil
+    end
+
+    local matches = {}
+
+    for _, objectiveKey in ipairs(requirements.orderedKeys or {}) do
+        local progress = entry.objectiveProgress and entry.objectiveProgress[objectiveKey] or nil
+        local completed = progress and progress.completed
+        if not completed then
+            local objectiveEntry = requirements.objectives and requirements.objectives[objectiveKey] or nil
+            local effectiveNeededCount = tonumber(progress and progress.needed or objectiveEntry and objectiveEntry.needed or 0) or 0
+            if effectiveNeededCount == neededCount then
+                matches[#matches + 1] = objectiveKey
+            end
+        end
+    end
+
+    if #matches == 1 then
+        return matches[1]
+    end
+
+    return nil
+end
+
 local function _SelectBestObjectiveKeyByWordCount(requirements, objectiveKeys, objectiveText)
     local objectiveTextWordCount = _CountObjectiveWords(objectiveText)
     if objectiveTextWordCount <= 0 or not objectiveKeys or #objectiveKeys <= 1 then
@@ -543,7 +713,7 @@ end
 
 local function _FindObjectiveKeyForQuestMessage(questId, objectiveText, botName, neededCount)
     local requirements = _GetQuestObjectiveRequirements(questId)
-    local normalizedObjective = _NormalizeObjectiveLabel(objectiveText)
+    local normalizedObjective = _NormalizeObjectiveProgressLabel(objectiveText)
     if not normalizedObjective then
         return nil
     end
@@ -578,6 +748,21 @@ local function _FindObjectiveKeyForQuestMessage(questId, objectiveText, botName,
         end
     end
 
+    if entry and neededCount and neededCount > 0 then
+        local strictNeededObjectiveKey = _FindUniqueUnresolvedObjectiveKeyByNeededCount(entry, requirements, neededCount)
+        if strictNeededObjectiveKey then
+            _Dbg(
+                "OBJ-MATCH-FALLBACK bot=%s quest=%s (%s) objectiveText=%s -> strict-needed=%s",
+                _SafeName(botName),
+                _SafeName(questId),
+                _GetQuestName(questId),
+                _SafeName(objectiveText),
+                _SafeName(strictNeededObjectiveKey)
+            )
+            return strictNeededObjectiveKey
+        end
+    end
+
     if requirements.objectiveCount == 1 and requirements.orderedKeys and requirements.orderedKeys[1] then
         _Dbg(
             "OBJ-MATCH-FALLBACK bot=%s quest=%s (%s) objectiveText=%s -> sole-objective=%s",
@@ -604,7 +789,7 @@ local function _FindObjectiveKeyForQuestMessage(questId, objectiveText, botName,
                 unresolvedObjectiveKeys[#unresolvedObjectiveKeys + 1] = objectiveKey
 
                 if neededCount and neededCount > 0 then
-                    if needed == 0 or needed == neededCount or current < neededCount then
+                    if needed == 0 or needed == neededCount then
                         sameNeededUnresolvedObjectiveKeys[#sameNeededUnresolvedObjectiveKeys + 1] = objectiveKey
                     end
                 end
@@ -1006,26 +1191,26 @@ end
 --------------------------------------------------------------------------------
 
 _EnsureUnifiedCache = function()
- local cache = Questie.db.char.playerbotsQuestStateCache
+    local cache = Questie.db.char.playerbotsQuestStateCache
 
- if not cache or type(cache) ~= "table" then
-     cache = {
-         version        = 4,
-         groupSignature = nil,
-         bots           = {},
-     }
- else
-     cache.version = 4
-     cache.bots    = cache.bots or {}
- end
+    if not cache or type(cache) ~= "table" then
+        cache = {
+            version        = 4,
+            groupSignature = nil,
+            bots           = {},
+        }
+    else
+        cache.version = 4
+        cache.bots    = cache.bots or {}
+    end
 
- Questie.db.char.playerbotsQuestStateCache = cache
+    Questie.db.char.playerbotsQuestStateCache = cache
 
- if _NormalizeUnifiedCache then
-     _NormalizeUnifiedCache(cache)
- end
+    if _NormalizeUnifiedCache then
+        _NormalizeUnifiedCache(cache)
+    end
 
- return cache
+    return cache
 end
 
 local function _RememberQuestNameAlias(botName, questId, reportedQuestName)
@@ -1054,30 +1239,20 @@ local function _RememberQuestNameAlias(botName, questId, reportedQuestName)
     entry.lastSeen = time()
 end
 
-local function _RememberObjectiveAlias(botName, questId, objectiveKey, reportedObjectiveText)
-    if not botName or not questId or not objectiveKey or not reportedObjectiveText or reportedObjectiveText == "" then
-        return
+local function _NormalizeReportedObjectiveAliasesMap(reportedObjectiveAliases)
+    if type(reportedObjectiveAliases) ~= "table" then
+        return nil
     end
 
-    local normalizedObjectiveText = _NormalizeObjectiveLabel(reportedObjectiveText)
-    if not normalizedObjectiveText then
-        return
+    local normalizedReportedObjectiveAliases = {}
+    for reportedKey, objectiveKey in pairs(reportedObjectiveAliases) do
+        local normalizedReportedObjective = _NormalizeObjectiveProgressLabel(reportedKey)
+        if normalizedReportedObjective and type(objectiveKey) == "string" then
+            normalizedReportedObjectiveAliases[normalizedReportedObjective] = objectiveKey
+        end
     end
 
-    local cache = _EnsureUnifiedCache()
-    local botEntries = cache.bots[botName]
-    if not botEntries then
-        return
-    end
-
-    local entry = botEntries[questId] or botEntries[tostring(questId)]
-    if not entry then
-        return
-    end
-
-    entry.reportedObjectiveAliases = entry.reportedObjectiveAliases or {}
-    entry.reportedObjectiveAliases[normalizedObjectiveText] = objectiveKey
-    entry.lastSeen = time()
+    return next(normalizedReportedObjectiveAliases) and normalizedReportedObjectiveAliases or nil
 end
 
 local function _RememberObjectiveAlias(botName, questId, objectiveKey, reportedObjectiveText)
@@ -1085,7 +1260,7 @@ local function _RememberObjectiveAlias(botName, questId, objectiveKey, reportedO
         return
     end
 
-    local normalizedObjectiveText = _NormalizeObjectiveLabel(reportedObjectiveText)
+    local normalizedObjectiveText = _NormalizeObjectiveProgressLabel(reportedObjectiveText)
     if not normalizedObjectiveText then
         return
     end
@@ -1114,66 +1289,42 @@ local function _CopyStringList(values)
     return copy
 end
 
-local function _GetCurrentOnlineGroupBotsFromCache()
-    local cache            = _EnsureUnifiedCache()
-    local currentGroupBots = {}
-    local currentNames     = _GetGroupMemberNames()
-
-    if #currentNames == 0 then
-        return currentGroupBots, nil
-    end
-
-    local allowedNames = {}
-    for _, botName in ipairs(currentNames) do
-        allowedNames[botName] = true
-    end
-
-    for botName, botEntries in pairs(cache.bots or {}) do
-        if allowedNames[botName] then
-            currentGroupBots[botName] = botEntries
-        end
-    end
-
-    local currentSignatureParts = {}
-    for botName in pairs(currentGroupBots) do
-        currentSignatureParts[#currentSignatureParts + 1] = botName
-    end
-
-    if #currentSignatureParts == 0 then
-        return currentGroupBots, nil
-    end
-
-    tsort(currentSignatureParts)
-    return currentGroupBots, tconcat(currentSignatureParts, "|")
-end
-
-local function _GetArchivedBotsFromCache()
-    local cache        = _EnsureUnifiedCache()
-    local archivedBots = {}
+local function _GetFilteredBotsFromCache(keepCurrentGroupBots)
+    local cache = _EnsureUnifiedCache()
+    local filteredBots = {}
     local currentNames = _GetGroupMemberNames()
-    local currentSet   = {}
+    local currentSet = {}
 
     for _, botName in ipairs(currentNames) do
         currentSet[botName] = true
     end
 
     for botName, botEntries in pairs(cache.bots or {}) do
-        if not currentSet[botName] then
-            archivedBots[botName] = botEntries
+        local isCurrentGroupBot = currentSet[botName] or false
+        if isCurrentGroupBot == keepCurrentGroupBots then
+            filteredBots[botName] = botEntries
         end
     end
 
-    local archivedSignatureParts = {}
-    for botName in pairs(archivedBots) do
-        archivedSignatureParts[#archivedSignatureParts + 1] = botName
+    local signatureParts = {}
+    for botName in pairs(filteredBots) do
+        signatureParts[#signatureParts + 1] = botName
     end
 
-    if #archivedSignatureParts == 0 then
-        return archivedBots, nil
+    if #signatureParts == 0 then
+        return filteredBots, nil
     end
 
-    tsort(archivedSignatureParts)
-    return archivedBots, tconcat(archivedSignatureParts, "|")
+    tsort(signatureParts)
+    return filteredBots, tconcat(signatureParts, "|")
+end
+
+local function _GetCurrentOnlineGroupBotsFromCache()
+    return _GetFilteredBotsFromCache(true)
+end
+
+local function _GetArchivedBotsFromCache()
+    return _GetFilteredBotsFromCache(false)
 end
 
 --------------------------------------------------------------------------------
@@ -1374,33 +1525,7 @@ _NormalizeUnifiedCache = function(cache)
                         entry.reportedQuestNames = next(normalizedReportedQuestNames) and normalizedReportedQuestNames or nil
                     end
 
-                    if type(entry.reportedObjectiveAliases) ~= "table" then
-                        entry.reportedObjectiveAliases = nil
-                    else
-                        local normalizedReportedObjectiveAliases = {}
-                        for reportedKey, objectiveKey in pairs(entry.reportedObjectiveAliases) do
-                            local normalizedReportedObjective = _NormalizeObjectiveLabel(reportedKey)
-                            if normalizedReportedObjective and type(objectiveKey) == "string" then
-                                normalizedReportedObjectiveAliases[normalizedReportedObjective] = objectiveKey
-                            end
-                        end
-
-                        entry.reportedObjectiveAliases = next(normalizedReportedObjectiveAliases) and normalizedReportedObjectiveAliases or nil
-                    end
-
-                    if type(entry.reportedObjectiveAliases) ~= "table" then
-                        entry.reportedObjectiveAliases = nil
-                    else
-                        local normalizedReportedObjectiveAliases = {}
-                        for reportedKey, objectiveKey in pairs(entry.reportedObjectiveAliases) do
-                            local normalizedReportedObjective = _NormalizeObjectiveLabel(reportedKey)
-                            if normalizedReportedObjective and type(objectiveKey) == "string" then
-                                normalizedReportedObjectiveAliases[normalizedReportedObjective] = objectiveKey
-                            end
-                        end
-
-                        entry.reportedObjectiveAliases = next(normalizedReportedObjectiveAliases) and normalizedReportedObjectiveAliases or nil
-                    end
+                    entry.reportedObjectiveAliases = _NormalizeReportedObjectiveAliasesMap(entry.reportedObjectiveAliases)
 
                     if entry.state == "active" and _IsObjectiveProgressCompleteForQuest(questId, entry.objectiveProgress) then
                         entry.state = "completed"
@@ -1482,7 +1607,6 @@ local function _SetBotQuestState(botName, questId, state)
     local previousEntry = cache.bots[botName][questId]
     local previousReportedObjectiveAliases = previousEntry and previousEntry.reportedObjectiveAliases or nil
     local previousReportedQuestNames = previousEntry and previousEntry.reportedQuestNames or nil
-    local previousReportedObjectiveAliases = previousEntry and previousEntry.reportedObjectiveAliases or nil
     local previousObjectiveProgress = previousEntry and previousEntry.objectiveProgress or nil
     local previousInferredComplete = previousEntry and previousEntry.inferredComplete or nil
     local previousLootProgress = previousEntry and previousEntry.lootProgress or nil
@@ -2452,6 +2576,7 @@ local function _OnLoot(_, message, _, _, _, playerName)
                 if newCount > currentCount then
                     entry.lootProgress[itemId] = newCount
                     entry.lastSeen = time()
+                    hasStateChange = true
 
                     if _IsLootProgressCompleteForQuest(numericQuestId, entry.lootProgress) then
                         entry.lootInferredComplete = true
@@ -2481,7 +2606,10 @@ local function _OnLoot(_, message, _, _, _, playerName)
                     newObjectiveCount = objectiveEntry.needed
                 end
 
-                if _UpdateBotQuestObjectiveProgress(botName, numericQuestId, objectiveKey, newObjectiveCount, objectiveEntry.needed) then
+                local objectiveStateChanged = _UpdateBotQuestObjectiveProgress(
+                    botName, numericQuestId, objectiveKey, newObjectiveCount, objectiveEntry.needed
+                )
+                if objectiveStateChanged or newObjectiveCount > currentObjectiveCount then
                     hasStateChange = true
                 end
             end
@@ -2579,9 +2707,16 @@ local function _BuildBotQuestProgressLinesFromEntry(entry)
     local playerObjectiveTemplate = _GetPlayerQuestObjectiveTemplate(entry.questId)
     if playerObjectiveTemplate and #playerObjectiveTemplate > 0 then
         local progressLines = {}
+        local usedObjectiveKeys = {}
 
         for objectiveIndex, templateEntry in ipairs(playerObjectiveTemplate) do
-            local objectiveKey = requirements.orderedKeys and requirements.orderedKeys[objectiveIndex] or nil
+            local objectiveKey = _FindObjectiveKeyForTemplateEntry(requirements, templateEntry, usedObjectiveKeys)
+            if objectiveKey then
+                usedObjectiveKeys[objectiveKey] = true
+            else
+                objectiveKey = requirements.orderedKeys and requirements.orderedKeys[objectiveIndex] or nil
+            end
+
             local objectiveEntry = objectiveKey and requirements.objectives[objectiveKey] or nil
             local progress = objectiveKey and entry.objectiveProgress and entry.objectiveProgress[objectiveKey] or nil
 
